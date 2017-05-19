@@ -1355,6 +1355,67 @@ namespace OCL
             }
         }
 
+        // Update the properties before connecting the ports.
+        // This way we could use properties to handle "per Component" connection settings
+        // not specified in the ConnPolicy.
+        for (RTT::PropertyBag::iterator it= root.begin(); it!=root.end();it++) {
+            RTT::Property<RTT::PropertyBag> comp = *it;
+            if ( !comp.ready() )
+                continue;
+
+            // only components in this group
+            if (group != compmap[ comp.getName() ].group) {
+                continue;
+            }
+
+            RTT::TaskContext* peer = compmap[ comp.getName() ].instance;
+
+            // Do not load properties when not stopped (Backward compatible).
+            if ( peer->getTaskState() > Stopped) {
+                log(Warning) << "Component "<< peer->getName()<< " doesn't load properties (already Running)." <<endlog();
+                continue;
+            }
+
+            // Check for default properties to set.
+            for (RTT::PropertyBag::const_iterator pf = comp.rvalue().begin(); pf!= comp.rvalue().end(); ++pf) {
+                // set PropFile name if present
+                if ( (*pf)->getName() == "Properties"){
+                    RTT::Property<RTT::PropertyBag> props = *pf; // convert to type.
+                    bool ret = updateProperties( *peer->properties(), props);
+                    if (!ret) {
+                        log(Error) << "Failed to configure properties from main configuration file for component "<< comp.getName() <<endlog();
+                        valid = false;
+                    } else {
+                        log(Info) << "Configured Properties of "<< comp.getName() <<" from main configuration file." <<endlog();
+                    }
+                }
+            }
+            // Load/update from property files.
+            for (RTT::PropertyBag::const_iterator pf = comp.rvalue().begin(); pf!= comp.rvalue().end(); ++pf) {
+                // set PropFile name if present
+                if ( (*pf)->getName() == "PropertyFile" || (*pf)->getName() == "UpdateProperties" || (*pf)->getName() == "LoadProperties"){
+                    dummy = *pf; // convert to type.
+                    string filename = dummy.get();
+                    marsh::PropertyLoader pl(peer);
+                    bool strict = (*pf)->getName() == "PropertyFile" ? true : false;
+                    bool load = (*pf)->getName() == "LoadProperties" ? true : false;
+                    bool ret;
+                    if (!load)
+                        ret = pl.configure( filename, strict );
+                    else
+                        ret = pl.load(filename);
+                    if (!ret) {
+                        log(Error) << "Failed to configure properties for component "<< comp.getName() <<endlog();
+                        valid = false;
+                    } else {
+                        log(Info) << "Configured Properties of "<< comp.getName() << " from "<<filename<<endlog();
+                        compmap[ comp.getName() ].loadedProperties = true;
+                    }
+                }
+            }
+
+        }
+
         // Autoconnect ports. The port name is the topic name.
         for (RTT::PropertyBag::iterator it= root.begin(); it!=root.end();it++) {
             RTT::Property<RTT::PropertyBag> comp = *it;
@@ -1400,44 +1461,6 @@ namespace OCL
             if ( peer->getTaskState() > Stopped) {
                 log(Warning) << "Component "<< peer->getName()<< " doesn't need to be configured (already Running)." <<endlog();
                 continue;
-            }
-
-            // Check for default properties to set.
-            for (RTT::PropertyBag::const_iterator pf = comp.rvalue().begin(); pf!= comp.rvalue().end(); ++pf) {
-                // set PropFile name if present
-                if ( (*pf)->getName() == "Properties"){
-                    RTT::Property<RTT::PropertyBag> props = *pf; // convert to type.
-                    bool ret = updateProperties( *peer->properties(), props);
-                    if (!ret) {
-                        log(Error) << "Failed to configure properties from main configuration file for component "<< comp.getName() <<endlog();
-                        valid = false;
-                    } else {
-                        log(Info) << "Configured Properties of "<< comp.getName() <<" from main configuration file." <<endlog();
-                    }
-                }
-            }
-            // Load/update from property files.
-            for (RTT::PropertyBag::const_iterator pf = comp.rvalue().begin(); pf!= comp.rvalue().end(); ++pf) {
-                // set PropFile name if present
-                if ( (*pf)->getName() == "PropertyFile" || (*pf)->getName() == "UpdateProperties" || (*pf)->getName() == "LoadProperties"){
-                    dummy = *pf; // convert to type.
-                    string filename = dummy.get();
-                    marsh::PropertyLoader pl(peer);
-                    bool strict = (*pf)->getName() == "PropertyFile" ? true : false;
-                    bool load = (*pf)->getName() == "LoadProperties" ? true : false;
-                    bool ret;
-                    if (!load)
-                        ret = pl.configure( filename, strict );
-                    else
-                        ret = pl.load(filename);
-                    if (!ret) {
-                        log(Error) << "Failed to configure properties for component "<< comp.getName() <<endlog();
-                        valid = false;
-                    } else {
-                        log(Info) << "Configured Properties of "<< comp.getName() << " from "<<filename<<endlog();
-                        compmap[ comp.getName() ].loadedProperties = true;
-                    }
-                }
             }
 
             // Attach activities
@@ -1918,7 +1941,7 @@ namespace OCL
         }
         return false;
     }
-	
+
     bool DeploymentComponent::setActivityOnCPU(const std::string& comp_name,
                                           double period, int priority,
 					       int scheduler, unsigned int cpu_nr)
@@ -2365,7 +2388,7 @@ namespace OCL
                     log(Debug) << "Waiting for deployment shutdown to complete ..." << endlog();
                     int waited = 0;
                     while ( ( (has_operation && RTT::SendNotReady == handle.collectIfDone() ) ||
-                              (has_program && peer->getProvider<Scripting>("scripting")->isProgramRunning(NAME)) ) 
+                              (has_program && peer->getProvider<Scripting>("scripting")->isProgramRunning(NAME)) )
                             && (waited < totalWait) )
                     {
                         (void)rtos_nanosleep(&ts, NULL);
