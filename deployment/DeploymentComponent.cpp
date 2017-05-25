@@ -38,6 +38,7 @@
 #include <rtt/scripting/Scripting.hpp>
 #include <rtt/ConnPolicy.hpp>
 #include <rtt/plugin/PluginLoader.hpp>
+#include <rtt/internal/GlobalService.hpp>
 
 # if defined(_POSIX_VERSION)
 #   define USE_SIGNALS 1
@@ -897,6 +898,29 @@ namespace OCL
                             if ( this->loadComponentsInGroup( includep.get(), group ) == false )
                                 valid = false;
                             continue;
+                        }
+                        if ( (*it)->getName() == "GlobalService" ) {
+                          RTT::Property<RTT::PropertyBag> global = *it;
+                          if ( !global.ready() ) {
+                            log(Error)<< "Found 'Global' statement, but it is not a complex xml type"<<endlog();
+                            valid = false;
+                            continue;
+                          }
+                          // Check for default Global properties to be set.
+                          for (RTT::PropertyBag::const_iterator pf = global.rvalue().begin(); pf!= global.rvalue().end(); ++pf) {
+                              // set PropFile name if present
+                              if ( (*pf)->getName() == "Properties"){
+                                  RTT::Property<RTT::PropertyBag> props = *pf; // convert to type.
+                                  bool ret = updateProperties( *RTT::internal::GlobalService::Instance()->properties(), props);
+                                  if (!ret) {
+                                      log(Error) << "Failed to configure Global properties from main configuration file."<<endlog();
+                                      valid = false;
+                                  } else {
+                                      log(Info) << "Configured Global Properties from main configuration file." <<endlog();
+                                  }
+                              }
+                          }
+                          continue;
                         }
                         // Check if it is a propertybag.
                         RTT::Property<RTT::PropertyBag> comp = *it;
