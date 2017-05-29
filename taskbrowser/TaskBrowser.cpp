@@ -480,9 +480,12 @@ namespace OCL
                 completes.push_back("trace ");
             if ( std::string( "untrace " ).find(text) == 0 )
                 completes.push_back("untrace ");
-            if ( std::string( "GlobalService" ).find(text) == 0 )
+            if ( std::string( "GlobalService" ).find(text) == 0 &&
+                 text.find(".") == std::string::npos )
                 completes.push_back("GlobalService");
-
+            if ( std::string( "GlobalsRepository" ).find(text) == 0 &&
+                 text.find(".") == std::string::npos )
+                completes.push_back("GlobalsRepository");
 
             if (taskcontext == context && string("leave").find(text) == 0)
                 completes.push_back("leave");
@@ -539,8 +542,21 @@ namespace OCL
                 completes.push_back( *i );
         }
 
-        // Global methods:
-        if ( taskobject == peer->provides() && peer == context) {
+        if (component.find("GlobalsRepository") == 0) {
+
+            // Global Attributes:
+            comps = GlobalsRepository::Instance()->getAttributeNames();
+            for (std::vector<std::string>::iterator i = comps.begin(); i!= comps.end(); ++i ) {
+                completes.push_back( "GlobalsRepository." + *i );
+            }
+
+            // Global Properties:
+            comps = GlobalsRepository::Instance()->properties()->list();
+            for (std::vector<std::string>::iterator i = comps.begin(); i!= comps.end(); ++i ) {
+                completes.push_back( "GlobalsRepository." + *i );
+            }
+        } else if ( taskobject == peer->provides() && peer == context ) {
+            // Global methods:
             comps = GlobalService::Instance()->getNames();
             for (std::vector<std::string>::iterator i = comps.begin(); i!= comps.end(); ++i ) {
                 if ( i->find( component ) == 0  )
@@ -881,6 +897,7 @@ namespace OCL
                 }
                 str_trim( command, ' ');
                 cout << coloroff;
+
                 if ( command == "quit" ) {
                     // Intercept no Ctrl-C
                     cout << endl;
@@ -890,7 +907,9 @@ namespace OCL
                 } else if ( command.find("help ") == 0) {
                     printHelp( command.substr(command.rfind(' ')));
                 } else if ( command == "GlobalService" ) {
-                    this->printService(command);
+                    printService(command);
+                } else if ( command == "GlobalsRepository" ) {
+                    printGlobals();
                 } else if ( command == "#debug") {
                     debug = !debug;
                 } else if ( command.find("list ") == 0 || command == "list" ) {
@@ -1410,7 +1429,7 @@ namespace OCL
 
 
 
-    bool TaskBrowser::printService( string name ) {
+    bool TaskBrowser::printService( const std::string name ) {
     	bool result = false;
         Service::shared_ptr ops = stringToService(name);
         ServiceRequester::shared_ptr sr;
@@ -1511,6 +1530,7 @@ namespace OCL
                     sresult <<coloron<< "(none)";
                 }
                 sresult << coloroff << nl;
+                cout << sresult.str() << coloroff << nl;
                 sresult.str("");
                 result = true;
             }
@@ -1526,6 +1546,49 @@ namespace OCL
                 result = true;
             }
         return result;
+    }
+
+    bool TaskBrowser::printGlobals() {
+
+      GlobalsRepository::shared_ptr globals = GlobalsRepository::Instance();
+
+      sresult << nl << "Printing Interface of '"<< coloron << "GlobalsRepository" <<coloroff <<"' :"<<nl;
+      sresult << nl <<" Configuration Properties: ";
+      RTT::PropertyBag* bag = globals->properties();
+      if ( bag && bag->size() != 0 ) {
+        // Print Properties:
+        for( RTT::PropertyBag::iterator it = bag->begin(); it != bag->end(); ++it) {
+          base::DataSourceBase::shared_ptr pds = (*it)->getDataSource();
+          sresult << nl << setw(11)<< right << Types()->toDot( (*it)->getType() )<< " "
+             << coloron <<setw(14)<<left<< (*it)->getName() << coloroff;
+          this->printResult( pds.get(), false ); // do not recurse
+          sresult<<" ("<< (*it)->getDescription() <<')';
+        }
+      } else {
+        sresult << coloron << "(none)";
+        sresult << nl;
+      }
+
+      sresult << nl << "  Attributes   : ";
+      std::vector<std::string> objlist = globals->getAttributeNames();
+      if ( !objlist.empty() ) {
+          sresult << nl;
+          // Print Attributes:
+          for( std::vector<std::string>::iterator it = objlist.begin(); it != objlist.end(); ++it) {
+              base::DataSourceBase::shared_ptr pds = globals->getValue(*it)->getDataSource();
+              sresult << setw(11)<< right << Types()->toDot( pds->getType() )<< " "
+                   << coloron <<setw( 14 )<<left<< *it << coloroff;
+              this->printResult( pds.get(), false ); // do not recurse
+              sresult <<nl;
+          }
+      } else {
+          sresult << coloron << "(none)";
+          sresult << coloroff << nl;
+      }
+
+      cout << sresult.str() << coloroff << nl;
+      sresult.str("");
+      return true;
     }
 
     void TaskBrowser::evalCommand(std::string& comm )
@@ -1548,6 +1611,30 @@ namespace OCL
 
         if ( result ) {
             return;
+        }
+
+        // Minor hack : since GlobalsRepository is nor a peer or a service therefore
+        // seen_dotmember() wouldn't work.
+        if ( comm.find("GlobalsRepository.") == 0  ) {
+            std::string::size_type pos = comm.find("GlobalsRepository.")+strlen("GlobalsRepository.");
+            std::string global_var_name = std::string(comm, pos, comm.length());
+            GlobalsRepository::shared_ptr globals = GlobalsRepository::Instance();
+
+            if ( globals->hasAttribute( global_var_name ) ) {
+                cerr << "Found value..."<<nl;
+                this->printResult( globals->getValue( comm )->getDataSource().get(), true );
+                cout << sresult.str()<<nl;
+                sresult.str("");
+                return;
+            }
+
+            if ( globals->hasProperty( global_var_name ) ) {
+                cerr << "Found value..."<<nl;
+                this->printResult( globals->properties()->find(global_var_name)->getDataSource().get(), true );
+                cout << sresult.str()<<nl;
+                sresult.str("");
+                return;
+            }
         }
 
 	    // Set caller=0 to have correct call/send semantics.
